@@ -41,19 +41,14 @@ def calculate_fund_xirr(transactions, current_valuation):
             if amt == 0: continue
             
             # Logic: Purchase is Cash OUT (-), Redemption is Cash IN (+)
-            # casparser usually gives negative for Reversal/Redemption? 
-            # We need to ensure Purchase is Negative for XIRR calculation.
-            
             description = str(txn.description).upper()
             
-            # Check transaction type based on description or amount sign
-            # In casparser, amount is absolute. We must assign sign.
             if any(x in description for x in ["PURCHASE", "SIP", "SWITCH IN", "STP IN", "DIVIDEND REINVEST"]):
                 amounts.append(amt * -1.0) # Money leaving pocket
             elif any(x in description for x in ["REDEMPTION", "SWITCH OUT", "STP OUT", "SWP"]):
                 amounts.append(amt * 1.0)  # Money coming back
             else:
-                # Fallback: assume Purchase if we aren't sure, or skip
+                # Fallback: assume Purchase if we aren't sure
                 amounts.append(amt * -1.0)
                 
             dates.append(dt)
@@ -90,16 +85,17 @@ st.markdown("""
 **Comprehensive Analysis:** Commission Check • Asset Allocation • XIRR Performance • Fund Ratings
 """)
 
-# Sidebar for Input
-with st.sidebar:
-    st.header("📂 Data Input")
-    uploaded_file = st.file_uploader("Upload CAMS/KFintech CAS (PDF)", type="pdf")
-    password = st.text_input("PDF Password", type="password")
-    
-    st.info("ℹ️ Privacy Note: Analysis happens in your browser session. No data is stored.")
+st.divider()
+
+# --- INPUT SECTION (Moved to Main Page) ---
+st.subheader("📂 Step 1: Upload Data")
+uploaded_file = st.file_uploader("Upload CAMS/KFintech CAS (PDF)", type="pdf")
+password = st.text_input("Enter PDF Password (PAN)", type="password")
+
+st.caption("ℹ️ Privacy Note: Analysis happens in your browser session. No data is stored.")
 
 if uploaded_file and password:
-    if st.button("🚀 Run Full Diagnosis"):
+    if st.button("🚀 Run Full Diagnosis", type="primary"):
         try:
             with st.spinner("Initializing Deep Scan Engine (pdfminer)..."):
                 # Save temp file
@@ -113,15 +109,15 @@ if uploaded_file and password:
                 # --- AGGREGATION VARIABLES ---
                 portfolio_data = []
                 total_current_value = 0.0
-                total_invested_approx = 0.0 # Hard to get exact without full history, but we try
                 total_commission_loss = 0.0
                 
                 # --- PROCESSING LOOP ---
-                progress_text = st.empty()
                 
                 for folio in data.folios:
                     for scheme in folio.schemes:
                         name = scheme.scheme
+                        
+                        # Handle Valuation
                         valuation = float(scheme.valuation.value or 0)
                         
                         # Skip zero balance funds for main view
@@ -162,11 +158,11 @@ if uploaded_file and password:
                 
                 # SECTION 1: KEY METRICS
                 st.divider()
+                st.subheader("📊 Portfolio Summary")
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Total Portfolio Value", f"₹{total_current_value:,.0f}")
+                m1.metric("Total Value", f"₹{total_current_value:,.0f}")
                 
-                # Calculate Weighted Avg XIRR (Approx) or just sum of loss
-                m2.metric("Hidden Commissions / Year", f"₹{total_commission_loss:,.0f}", 
+                m2.metric("Hidden Commissions", f"₹{total_commission_loss:,.0f}", 
                           delta="- Savings Opportunity" if total_commission_loss > 0 else "Perfect",
                           delta_color="inverse")
                 
@@ -177,7 +173,7 @@ if uploaded_file and password:
                           delta_color="inverse")
 
                 # SECTION 2: ASSET ALLOCATION
-                st.subheader("📊 Asset Allocation")
+                st.subheader("🍰 Asset Allocation")
                 if not df.empty:
                     # Group by Category
                     allocation = df.groupby("Category")["Value (₹)"].sum().reset_index()
@@ -212,6 +208,7 @@ if uploaded_file and password:
                     st.warning(f"⚠️ REVIEW: {bad_funds_count} funds are performing below 0% or low returns. Consider rebalancing.")
                     
                 if total_commission_loss == 0 and bad_funds_count == 0:
+                    st.balloons()
                     st.success("✅ Your Portfolio is in excellent shape!")
 
         except Exception as e:
