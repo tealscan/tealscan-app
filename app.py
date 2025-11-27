@@ -37,7 +37,11 @@ if st.button("🚀 Scan Portfolio"):
                 for folio in data.folios:
                     for scheme in folio.schemes:
                         name = scheme.scheme
-                        value = scheme.valuation.value
+                        
+                        # --- THE FIX IS HERE ---
+                        # Convert Decimal to float immediately so math works
+                        value = float(scheme.valuation.value)
+                        
                         total_val += value
                         
                         # LOGIC: If "Direct" is missing, it's likely Regular
@@ -68,6 +72,6 @@ if st.button("🚀 Scan Portfolio"):
                     st.success("✅ Excellent! Your portfolio is 100% Direct Plans.")
 
         except Exception as e:
-            st.error(f"❌ Error reading PDF. Check your password. Details: {e}")
+            st.error(f"❌ Error reading PDF. Details: {e}")
     else:
         st.warning("⚠️ Please upload a file and enter a password.")
