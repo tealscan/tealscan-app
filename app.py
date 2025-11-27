@@ -11,7 +11,7 @@ st.set_page_config(page_title="TealScan Pro", page_icon="📈", layout="wide")
 # --- HELPER FUNCTIONS ---
 
 def get_asset_class(fund_name):
-    """Guess Asset Class based on keywords in the Fund Name"""
+    """Broad Asset Class (Equity vs Debt)"""
     name = fund_name.upper()
     if any(x in name for x in ["LIQUID", "OVERNIGHT", "BOND", "DEBT", "GILT", "TREASURY"]):
         return "Debt"
@@ -22,6 +22,20 @@ def get_asset_class(fund_name):
     else:
         return "Equity"
 
+def get_detailed_category(fund_name):
+    """Specific Category for Overlap Checks"""
+    name = fund_name.upper()
+    if "SMALL CAP" in name: return "Small Cap"
+    if "MID CAP" in name: return "Mid Cap"
+    if "LARGE" in name and "MID" in name: return "Large & Mid Cap"
+    if "LARGE CAP" in name: return "Large Cap"
+    if "FLEXI" in name: return "Flexi Cap"
+    if "ELSS" in name or "TAX SAVER" in name: return "ELSS (Tax Saver)"
+    if "INDEX" in name: return "Index Fund"
+    if "MULTI" in name: return "Multi Cap"
+    if "VALUE" in name: return "Value Fund"
+    return "Other Equity"
+
 def calculate_metrics(scheme):
     """
     Smart calculation that handles 'Partial Data' gracefully.
@@ -31,14 +45,13 @@ def calculate_metrics(scheme):
     current_val = float(scheme.valuation.value or 0)
     total_cost = float(scheme.valuation.cost or 0)
     
-    # 1. Calculate Absolute Return (Simple & Robust)
+    # 1. Calculate Absolute Return
     abs_return = 0.0
     if total_cost > 0:
         abs_return = ((current_val - total_cost) / total_cost) * 100
 
     # 2. Check for "No Transaction" Case
     if not transactions:
-        # If we have no history, we can't calc XIRR. Return Absolute only.
         return None, abs_return, "No History"
 
     # 3. Try XIRR Calculation
@@ -46,11 +59,9 @@ def calculate_metrics(scheme):
     amounts = []
     
     try:
-        # Check if there is a massive Opening Balance mismatch
-        # If current value is 10x the sum of transactions found, the data is partial.
+        # Check for Partial Data (Opening Balance Mismatch)
         invested_sum = sum([float(t.amount) for t in transactions if t.amount])
         if invested_sum > 0 and (current_val / invested_sum) > 5.0 and total_cost > invested_sum:
-             # Likely a partial statement (Huge value, tiny SIPs found)
              return None, abs_return, "Partial Data"
 
         for txn in transactions:
@@ -81,7 +92,7 @@ def calculate_metrics(scheme):
         
         xirr_val = res * 100
         
-        # Sanity Check: If XIRR > 100% or < -90%, fallback to Absolute
+        # Sanity Check
         if xirr_val > 100.0 or xirr_val < -90.0:
              return None, abs_return, "Data Mismatch"
              
@@ -92,7 +103,6 @@ def calculate_metrics(scheme):
 
 def get_fund_rating(xirr_val, abs_val):
     """Rating Logic with Fallback"""
-    # Use XIRR if available, else Absolute Return
     val = xirr_val if xirr_val is not None else abs_val
     
     if val >= 20.0:
@@ -108,9 +118,9 @@ def get_fund_rating(xirr_val, abs_val):
 
 st.title("📈 TealScan Pro: Portfolio Health Engine")
 
-# --- INPUT SECTION (Main Page) ---
+# --- INPUT SECTION ---
 st.subheader("📂 Step 1: Upload Data")
-st.info("💡 For accurate XIRR, please upload a **'Since Inception'** CAS PDF. 'Financial Year' statements may show N/A.")
+st.info("💡 For accurate XIRR, please upload a **'Since Inception'** CAS PDF.")
 uploaded_file = st.file_uploader("Upload CAMS/KFintech CAS (PDF)", type="pdf")
 password = st.text_input("Enter PDF Password (PAN)", type="password")
 
@@ -126,6 +136,7 @@ if uploaded_file and password:
                 portfolio_data = []
                 total_curr = 0.0
                 total_invested = 0.0
+                total_commission_loss = 0.0
                 
                 for folio in data.folios:
                     for scheme in folio.schemes:
@@ -135,29 +146,30 @@ if uploaded_file and password:
                         
                         if valuation < 100: continue
                         
-                        category = get_asset_class(name)
+                        # Classifications
+                        asset_class = get_asset_class(name)
+                        detailed_cat = get_detailed_category(name)
                         is_regular = "DIRECT" not in name.upper()
                         
-                        # Calculate Metrics
+                        # Metrics
                         my_xirr, my_abs, status = calculate_metrics(scheme)
-                        
-                        # Determine Rating
                         rating = get_fund_rating(my_xirr, my_abs)
                         
-                        # Determine Display Values
-                        display_xirr = f"{my_xirr:.2f}%" if my_xirr is not None else "N/A"
-                        display_abs = f"{my_abs:.2f}%"
-                        
+                        # Commission Loss
+                        loss = valuation * 0.01 if is_regular else 0.0
+                        total_commission_loss += loss
+
                         portfolio_data.append({
                             "Fund Name": name,
-                            "Category": category,
+                            "Category": asset_class,
+                            "Sub-Category": detailed_cat,
                             "Value": valuation,
                             "Invested": cost,
                             "Type": "Regular 🔴" if is_regular else "Direct 🟢",
-                            "XIRR": display_xirr,
-                            "Abs Return": display_abs,
+                            "XIRR": f"{my_xirr:.2f}%" if my_xirr is not None else "N/A",
+                            "Abs Return": f"{my_abs:.2f}%",
                             "Rating": rating,
-                            "Data Status": status
+                            "Status": status
                         })
                         
                         total_curr += valuation
@@ -166,22 +178,42 @@ if uploaded_file and password:
                 # --- DASHBOARD ---
                 df = pd.DataFrame(portfolio_data)
                 
-                # METRICS
+                # 1. SUMMARY METRICS
                 st.divider()
                 st.subheader("📊 Portfolio Summary")
                 
-                # Calculate Overall Portfolio Gain
                 total_gain = total_curr - total_invested
                 total_gain_pct = (total_gain / total_invested * 100) if total_invested > 0 else 0
                 
-                m1, m2, m3 = st.columns(3)
+                m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Total Value", f"₹{total_curr:,.0f}")
                 m2.metric("Total Invested", f"₹{total_invested:,.0f}")
                 m3.metric("Overall Gain", f"₹{total_gain:,.0f}", f"{total_gain_pct:.1f}%")
+                m4.metric("Commission Loss", f"₹{total_commission_loss:,.0f}", 
+                          delta="Perfect" if total_commission_loss == 0 else "Switch & Save",
+                          delta_color="inverse")
 
-                # HEALTH CARD
+                # 2. CONCENTRATION & ALLOCATION (Restored)
+                st.divider()
+                c1, c2 = st.columns(2)
+                
+                with c1:
+                    st.subheader("🍰 Asset Allocation")
+                    if not df.empty:
+                        alloc = df.groupby("Category")["Value"].sum().reset_index()
+                        st.bar_chart(alloc, x="Category", y="Value", color="#2E86C1")
+                
+                with c2:
+                    st.subheader("🔍 Concentration Analysis")
+                    if not df.empty:
+                        # Breakdown by Specific Category (Small vs Mid vs Large)
+                        conc = df.groupby("Sub-Category")["Value"].sum().reset_index()
+                        st.bar_chart(conc, x="Sub-Category", y="Value", color="#E67E22")
+
+                # 3. HEALTH CARD
+                st.divider()
                 st.subheader("🏥 Fund Health Card")
-                st.caption("Note: funds with 'N/A' XIRR are due to partial transaction history in the PDF.")
+                st.caption("Note: 'N/A' XIRR indicates partial history in PDF. Rating uses Absolute Return in that case.")
                 
                 st.dataframe(
                     df,
@@ -193,15 +225,27 @@ if uploaded_file and password:
                     use_container_width=True
                 )
                 
-                # DOWNLOAD CSV
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    "📥 Download Analysis Report",
-                    csv,
-                    "tealscan_report.csv",
-                    "text/csv",
-                    key='download-csv'
-                )
+                # 4. ACTION PLAN (Restored)
+                st.divider()
+                st.subheader("⚡ Action Plan")
+                
+                # Check 1: Commissions
+                if total_commission_loss > 0:
+                    regular_count = len(df[df['Type'].str.contains("Regular")])
+                    st.error(f"🛑 **Commissions:** Switch {regular_count} 'Regular' funds to Direct Plans to save ₹{total_commission_loss:,.0f}/year.")
+                else:
+                    st.success("✅ **Commissions:** Zero! You are in 100% Direct Plans.")
+                
+                # Check 2: Overlap / Concentration
+                # Count funds per sub-category
+                cat_counts = df['Sub-Category'].value_counts()
+                risky_cats = cat_counts[cat_counts > 2]
+                
+                if not risky_cats.empty:
+                    for cat, count in risky_cats.items():
+                        st.warning(f"⚠️ **Concentration Risk:** You have {count} funds in '{cat}'. This causes high overlap. Consider reducing to 1-2 funds.")
+                else:
+                    st.info("✅ **Diversification:** Good balance. No category is overcrowded.")
 
         except Exception as e:
             st.error(f"❌ Error during analysis. Details: {e}")
